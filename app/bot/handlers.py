@@ -25,13 +25,10 @@ from app.db.session import SessionFactory
 router = Router()
 logger = logging.getLogger(__name__)
 
-# картинки лежат в app/
 APP_DIR = Path(__file__).resolve().parents[1]
 BROTHER_IMG = APP_DIR / "brother.png"
 SISTER_IMG = APP_DIR / "sister.png"
 
-
-# ---------- Keyboards ----------
 
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -125,13 +122,11 @@ def partner_priority_kb() -> InlineKeyboardMarkup:
 
 
 def preview_kb() -> InlineKeyboardMarkup:
-    # УБРАЛИ "Изменить" — оставляем только подтверждение
     return kb_from_rows([
         [("✅ Подтвердить", "profile:confirm")],
+        [("✏️ Изменить", "profile:edit")],
     ])
 
-
-# ---------- Helpers ----------
 
 def icon_path(gender: str | None) -> Path | None:
     if gender == "BROTHER":
@@ -170,10 +165,7 @@ async def ensure_gender_or_ask(message: Message, state: FSMContext) -> User | No
     user = await get_or_create_user(message.from_user.id, message.from_user.username)
     if not user.gender:
         await state.clear()
-        await message.answer(
-            "Ассаляму алейкум.\n\nПеред началом выберите, кто вы:",
-            reply_markup=gender_kb(),
-        )
+        await message.answer("Ассаляму алейкум.\n\nПеред началом выберите, кто вы:", reply_markup=gender_kb())
         return None
     return user
 
@@ -225,8 +217,6 @@ async def send_icon_if_exists(message: Message, gender: str | None) -> None:
         await message.answer_photo(FSInputFile(p))
 
 
-# ---------- Start / Gender ----------
-
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     user = await get_or_create_user(message.from_user.id, message.from_user.username)
@@ -234,11 +224,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await state.clear()
         await message.answer("Ассаляму алейкум.\n\nВыберите, кто вы:", reply_markup=gender_kb())
         return
-
-    await message.answer(
-        "Ассаляму алейкум.\n\nВыберите действие:",
-        reply_markup=main_kb(),
-    )
+    await message.answer("Ассаляму алейкум.\n\nВыберите действие:", reply_markup=main_kb())
 
 
 @router.callback_query(F.data.startswith("gender:"))
@@ -268,11 +254,8 @@ async def on_gender(call: CallbackQuery, state: FSMContext) -> None:
 
     await call.message.answer("Хорошо. Я задам несколько коротких вопросов.")
     await call.answer()
-
     await start_questionnaire(call.message, state)
 
-
-# ---------- Questionnaire flow ----------
 
 @router.message(Command("profile"))
 @router.message(F.text == "📝 Заполнить/обновить анкету")
@@ -336,8 +319,7 @@ async def q_city(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(Questionnaire.marital_status, F.data.startswith("ms:"))
 async def q_marital(call: CallbackQuery, state: FSMContext) -> None:
-    val = call.data.split(":", 1)[1]
-    await state.update_data(marital_status=val)
+    await state.update_data(marital_status=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.children)
     await call.message.answer("5) Есть ли у вас дети?", reply_markup=children_kb())
     await call.answer()
@@ -345,8 +327,7 @@ async def q_marital(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(Questionnaire.children, F.data.startswith("ch:"))
 async def q_children(call: CallbackQuery, state: FSMContext) -> None:
-    val = call.data.split(":", 1)[1]
-    await state.update_data(children=val)
+    await state.update_data(children=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.prayer)
     await call.message.answer("6) Совершаете ли вы намаз?", reply_markup=prayer_kb())
     await call.answer()
@@ -354,8 +335,7 @@ async def q_children(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(Questionnaire.prayer, F.data.startswith("pr:"))
 async def q_prayer(call: CallbackQuery, state: FSMContext) -> None:
-    val = call.data.split(":", 1)[1]
-    await state.update_data(prayer=val)
+    await state.update_data(prayer=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.relocation)
     await call.message.answer("7) Рассматриваете ли вы переезд после брака?", reply_markup=relocation_kb())
     await call.answer()
@@ -363,8 +343,7 @@ async def q_prayer(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(Questionnaire.relocation, F.data.startswith("rel:"))
 async def q_relocation(call: CallbackQuery, state: FSMContext) -> None:
-    val = call.data.split(":", 1)[1]
-    await state.update_data(relocation=val)
+    await state.update_data(relocation=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.goal)
     await call.message.answer("8) С какой целью вы здесь?", reply_markup=goal_kb())
     await call.answer()
@@ -372,8 +351,7 @@ async def q_relocation(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(Questionnaire.goal, F.data.startswith("goal:"))
 async def q_goal(call: CallbackQuery, state: FSMContext) -> None:
-    val = call.data.split(":", 1)[1]
-    await state.update_data(goal=val)
+    await state.update_data(goal=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.extra_about)
     await call.message.answer("9) Коротко о себе (1–3 предложения). Если не хотите — напишите: пропустить")
     await call.answer()
@@ -384,8 +362,8 @@ async def q_extra(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     if text.lower() == "пропустить":
         text = ""
-
     await state.update_data(extra_about=text)
+
     await state.set_state(Questionnaire.partner_age)
     await message.answer("10) Примерный возраст будущего супруга(и)? (например 22–28)")
 
@@ -393,10 +371,9 @@ async def q_extra(message: Message, state: FSMContext) -> None:
 @router.message(Questionnaire.partner_age)
 async def q_partner_age(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
-    if len(text) < 1:
+    if not text:
         await message.answer("Укажите возраст/диапазон (например 22–28).")
         return
-
     await state.update_data(partner_age=text)
     await state.set_state(Questionnaire.partner_nationality_pref)
     await message.answer("11) Национальность будущего супруга(и):", reply_markup=partner_nat_kb())
@@ -423,7 +400,6 @@ async def q_partner_nat_custom(message: Message, state: FSMContext) -> None:
     if len(text) < 2:
         await message.answer("Напишите чуть понятнее (минимум 2 символа).")
         return
-
     await state.update_data(partner_nationality_pref=text)
     await state.set_state(Questionnaire.partner_priority)
     await message.answer("12) Что для вас самое важное в будущем супруге(е)?", reply_markup=partner_priority_kb())
@@ -431,27 +407,30 @@ async def q_partner_nat_custom(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(Questionnaire.partner_priority, F.data.startswith("pp:"))
 async def q_partner_priority(call: CallbackQuery, state: FSMContext) -> None:
-    val = call.data.split(":", 1)[1]
-    await state.update_data(partner_priority=val)
-
+    await state.update_data(partner_priority=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.preview)
 
     user = await get_user(call.from_user.id)
     gender = user.gender if user and user.gender else "BROTHER"
 
     data = await state.get_data()
-    about_text, looking_text, pretty = build_preview_text(gender, data)
+    _about_text, _looking_text, pretty = build_preview_text(gender, data)
 
     await send_icon_if_exists(call.message, gender)
     await call.message.answer(pretty, reply_markup=preview_kb())
     await call.answer()
 
 
-# ---------- Preview confirm (без "изменить") ----------
+@router.callback_query(Questionnaire.preview, F.data == "profile:edit")
+async def preview_edit(call: CallbackQuery, state: FSMContext) -> None:
+    await call.answer()
+    await call.message.answer("Ок. Заполним анкету заново.")
+    await start_questionnaire(call.message, state)
+
 
 @router.callback_query(Questionnaire.preview, F.data == "profile:confirm")
 async def preview_confirm(call: CallbackQuery, state: FSMContext) -> None:
-    # Очень важно: сразу ответить на callback, чтобы Telegram не показывал "ошибка на сервере"
+    # важно: сразу отвечаем, чтобы Telegram не показывал “ошибка на сервере”
     await call.answer("Сохраняю...")
 
     try:
@@ -502,19 +481,11 @@ async def preview_confirm(call: CallbackQuery, state: FSMContext) -> None:
 
     except SQLAlchemyError as e:
         logger.exception("DB error on confirm: %s", e)
-        await call.message.answer(
-            "Ошибка сохранения анкеты (проблема базы).\n"
-            "Посмотрите подробности в консоли PyCharm (Traceback)."
-        )
+        await call.message.answer("Ошибка базы при сохранении анкеты. Посмотрите Traceback в консоли PyCharm.")
     except Exception as e:
         logger.exception("Unexpected error on confirm: %s", e)
-        await call.message.answer(
-            "Произошла ошибка при сохранении анкеты.\n"
-            "Посмотрите подробности в консоли PyCharm (Traceback)."
-        )
+        await call.message.answer("Ошибка при сохранении анкеты. Посмотрите Traceback в консоли PyCharm.")
 
-
-# ---------- Find ----------
 
 @router.message(Command("find"))
 @router.message(F.text == "🔎 Найти")
@@ -540,10 +511,7 @@ async def find_handler(message: Message, state: FSMContext) -> None:
         rows = (await session.execute(stmt)).all()
 
     if not rows:
-        await message.answer(
-            "Пока нет анкет подходящего пола в базе.\n"
-            "Для теста создайте анкету с другого аккаунта противоположного пола."
-        )
+        await message.answer("Пока нет анкет подходящего пола в базе.\nДля теста создайте анкету с другого аккаунта.")
         return
 
     await message.answer("Результаты (ник/username скрыт):")
@@ -562,14 +530,12 @@ async def find_handler(message: Message, state: FSMContext) -> None:
             f"Переезд: {profile.relocation or '-'}\n\n"
             f"О себе: {(profile.extra_about or '').strip() or '-'}\n"
         )
-
         if img and img.exists():
             await message.answer_photo(FSInputFile(img), caption=caption[:1024])
         else:
             await message.answer(caption)
 
 
-# ---------- Fallback ----------
 @router.message()
 async def fallback(message: Message) -> None:
     await message.answer("Используйте кнопки меню или /start", reply_markup=main_kb())
