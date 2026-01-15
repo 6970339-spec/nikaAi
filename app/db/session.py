@@ -36,6 +36,7 @@ async def init_db() -> None:
         await _ensure_column(conn, "users", "gender", "VARCHAR(10)")
 
         # profiles — добавляем колонки, если база старая
+        await _ensure_column(conn, "profiles", "name", "VARCHAR(64)")
         await _ensure_column(conn, "profiles", "age", "VARCHAR(10)")
         await _ensure_column(conn, "profiles", "nationality", "VARCHAR(64)")
         await _ensure_column(conn, "profiles", "city", "VARCHAR(128)")

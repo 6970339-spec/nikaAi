@@ -30,6 +30,7 @@ class Profile(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     # О себе (структурно)
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     age: Mapped[str | None] = mapped_column(String(10), nullable=True)
     nationality: Mapped[str | None] = mapped_column(String(64), nullable=True)
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)

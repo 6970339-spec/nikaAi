@@ -100,9 +100,9 @@ def relocation_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def goal_kb() -> InlineKeyboardMarkup:
+def name_kb() -> InlineKeyboardMarkup:
     return kb_from_rows([
-        [("Брак (никах)", "goal:Брак (никах)")],
+        [("Скрыть имя (при знакомстве)", "name:HIDE")],
     ])
 
 
@@ -172,12 +172,16 @@ async def ensure_gender_or_ask(message: Message, state: FSMContext) -> User | No
 
 async def start_questionnaire(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await state.set_state(Questionnaire.age)
-    await message.answer("1) Сколько вам лет? (напишите число, например 27)")
+    await state.set_state(Questionnaire.name)
+    await message.answer(
+        "1) Как вас зовут? Можете написать имя или скрыть до знакомства.",
+        reply_markup=name_kb(),
+    )
 
 
 def build_preview_text(gender: str, data: dict) -> tuple[str, str, str]:
     about_lines = [
+        f"Имя: {data.get('name', '-')}",
         f"Возраст: {data.get('age', '-')}",
         f"Национальность: {data.get('nationality', '-')}",
         f"Город/страна: {data.get('city', '-')}",
@@ -185,7 +189,6 @@ def build_preview_text(gender: str, data: dict) -> tuple[str, str, str]:
         f"Дети: {data.get('children', '-')}",
         f"Намаз: {data.get('prayer', '-')}",
         f"Переезд: {data.get('relocation', '-')}",
-        f"Цель: {data.get('goal', '-')}",
     ]
     extra = (data.get("extra_about") or "").strip()
     if extra:
@@ -266,6 +269,25 @@ async def start_profile(message: Message, state: FSMContext) -> None:
     await start_questionnaire(message, state)
 
 
+@router.callback_query(Questionnaire.name, F.data == "name:HIDE")
+async def q_name_hide(call: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(name="Скрыто")
+    await state.set_state(Questionnaire.age)
+    await call.message.answer("2) Сколько вам лет? (напишите число, например 27)")
+    await call.answer()
+
+
+@router.message(Questionnaire.name)
+async def q_name(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if len(text) < 2:
+        await message.answer("Введите имя (минимум 2 символа) или выберите вариант скрыть имя.")
+        return
+    await state.update_data(name=text)
+    await state.set_state(Questionnaire.age)
+    await message.answer("2) Сколько вам лет? (напишите число, например 27)")
+
+
 @router.message(Questionnaire.age)
 async def q_age(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
@@ -275,7 +297,7 @@ async def q_age(message: Message, state: FSMContext) -> None:
 
     await state.update_data(age=text)
     await state.set_state(Questionnaire.nationality)
-    await message.answer("2) Ваша национальность:", reply_markup=nationality_kb())
+    await message.answer("3) Ваша национальность:", reply_markup=nationality_kb())
 
 
 @router.callback_query(Questionnaire.nationality, F.data.startswith("nat:"))
@@ -289,7 +311,7 @@ async def q_nationality(call: CallbackQuery, state: FSMContext) -> None:
 
     await state.update_data(nationality=val)
     await state.set_state(Questionnaire.city)
-    await call.message.answer("3) Где вы живёте сейчас? (город, страна)")
+    await call.message.answer("4) Где вы живёте сейчас? (город, страна)")
     await call.answer()
 
 
@@ -302,7 +324,7 @@ async def q_nationality_other(message: Message, state: FSMContext) -> None:
 
     await state.update_data(nationality=text)
     await state.set_state(Questionnaire.city)
-    await message.answer("3) Где вы живёте сейчас? (город, страна)")
+    await message.answer("4) Где вы живёте сейчас? (город, страна)")
 
 
 @router.message(Questionnaire.city)
@@ -314,14 +336,14 @@ async def q_city(message: Message, state: FSMContext) -> None:
 
     await state.update_data(city=text)
     await state.set_state(Questionnaire.marital_status)
-    await message.answer("4) Ваш текущий семейный статус:", reply_markup=marital_status_kb())
+    await message.answer("5) Ваш текущий семейный статус:", reply_markup=marital_status_kb())
 
 
 @router.callback_query(Questionnaire.marital_status, F.data.startswith("ms:"))
 async def q_marital(call: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(marital_status=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.children)
-    await call.message.answer("5) Есть ли у вас дети?", reply_markup=children_kb())
+    await call.message.answer("6) Есть ли у вас дети?", reply_markup=children_kb())
     await call.answer()
 
 
@@ -329,7 +351,7 @@ async def q_marital(call: CallbackQuery, state: FSMContext) -> None:
 async def q_children(call: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(children=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.prayer)
-    await call.message.answer("6) Совершаете ли вы намаз?", reply_markup=prayer_kb())
+    await call.message.answer("7) Совершаете ли вы намаз?", reply_markup=prayer_kb())
     await call.answer()
 
 
@@ -337,21 +359,13 @@ async def q_children(call: CallbackQuery, state: FSMContext) -> None:
 async def q_prayer(call: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(prayer=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.relocation)
-    await call.message.answer("7) Рассматриваете ли вы переезд после брака?", reply_markup=relocation_kb())
+    await call.message.answer("8) Рассматриваете ли вы переезд после брака?", reply_markup=relocation_kb())
     await call.answer()
 
 
 @router.callback_query(Questionnaire.relocation, F.data.startswith("rel:"))
 async def q_relocation(call: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(relocation=call.data.split(":", 1)[1])
-    await state.set_state(Questionnaire.goal)
-    await call.message.answer("8) С какой целью вы здесь?", reply_markup=goal_kb())
-    await call.answer()
-
-
-@router.callback_query(Questionnaire.goal, F.data.startswith("goal:"))
-async def q_goal(call: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(goal=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.extra_about)
     await call.message.answer("9) Коротко о себе (1–3 предложения). Если не хотите — напишите: пропустить")
     await call.answer()
@@ -464,7 +478,7 @@ async def preview_confirm(call: CallbackQuery, state: FSMContext) -> None:
                 children=data.get("children"),
                 prayer=data.get("prayer"),
                 relocation=data.get("relocation"),
-                goal=data.get("goal"),
+                name=data.get("name"),
                 extra_about=(data.get("extra_about") or "").strip(),
                 partner_age=data.get("partner_age"),
                 partner_nationality_pref=data.get("partner_nationality_pref"),
@@ -521,6 +535,7 @@ async def find_handler(message: Message, state: FSMContext) -> None:
         caption = (
             f"Анкета #{profile.id}\n"
             f"🧑‍⚖️ {gender_label(u.gender)}\n\n"
+            f"Имя: {profile.name or '-'}\n"
             f"Возраст: {profile.age or '-'}\n"
             f"Национальность: {profile.nationality or '-'}\n"
             f"Город: {profile.city or '-'}\n"
