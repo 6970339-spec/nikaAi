@@ -3,6 +3,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 class Questionnaire(StatesGroup):
     # О себе
+    name = State()
     age = State()
     nationality = State()
     nationality_other = State()
@@ -11,7 +12,6 @@ class Questionnaire(StatesGroup):
     children = State()
     prayer = State()
     relocation = State()
-    goal = State()
     extra_about = State()
 
     # Кого ищу
