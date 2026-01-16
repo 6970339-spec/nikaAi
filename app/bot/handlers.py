@@ -109,7 +109,7 @@ def name_kb() -> InlineKeyboardMarkup:
 
 def partner_nat_kb() -> InlineKeyboardMarkup:
     return kb_from_rows([
-        [("Не имеет значения", "pn:Не имеет значения")],
+        [("Не важно", "pn:Не важно")],
         [("Та же, что у меня", "pn:Та же, что у меня")],
         [("Конкретно указать", "pn:CONCRETE")],
     ])
@@ -117,8 +117,8 @@ def partner_nat_kb() -> InlineKeyboardMarkup:
 
 def partner_priority_kb() -> InlineKeyboardMarkup:
     return kb_from_rows([
-        [("Религиозность", "pp:Религиозность"), ("Характер и уважение", "pp:Характер и уважение")],
-        [("Семейные ценности", "pp:Семейные ценности"), ("Всё вместе", "pp:Всё вместе")],
+        [("Соблюдающий", "pp:Соблюдающий"), ("Начинающий", "pp:Начинающий")],
+        [("Требующий знания", "pp:Требующий знания")],
     ])
 
 
@@ -186,26 +186,27 @@ async def start_questionnaire(message: Message, state: FSMContext) -> None:
     )
 
 
-def build_preview_text(gender: str, data: dict) -> tuple[str, str, str]:
+def build_preview_text(data: dict) -> tuple[str, str, str]:
     about_lines = [
-        f"👤 Имя: {data.get('name', '-')}",
-        f"🎂 Возраст: {data.get('age', '-')}",
-        f"🌍 Национальность: {data.get('nationality', '-')}",
-        f"🏙️ Город/страна: {data.get('city', '-')}",
-        f"💍 Статус: {data.get('marital_status', '-')}",
-        f"👶 Дети: {data.get('children', '-')}",
-        f"🕌 Намаз: {data.get('prayer', '-')}",
-        f"🧳 Переезд: {data.get('relocation', '-')}",
-        f"📩 Контакты (скрыты): {data.get('contact_info', '-')}",
+        f"🎂 <b>Возраст:</b> {data.get('age', '-')}",
+        f"🌍 <b>Нация:</b> {data.get('nationality', '-')}",
+        f"💍 <b>Статус:</b> {data.get('marital_status', '-')}",
+        "────────────",
+        f"👤 <b>Имя:</b> {data.get('name', '-')}",
+        f"🏙️ <b>Город/страна:</b> {data.get('city', '-')}",
+        f"👶 <b>Дети:</b> {data.get('children', '-')}",
+        f"🕌 <b>Намаз:</b> {data.get('prayer', '-')}",
+        f"🧳 <b>Переезд:</b> {data.get('relocation', '-')}",
+        f"📩 <b>Контакты (скрыты):</b> {data.get('contact_info', '-')}",
     ]
     extra = (data.get("extra_about") or "").strip()
     if extra:
-        about_lines.append(f"О себе: {extra}")
+        about_lines.append(f"<b>О себе:</b> {extra}")
 
     looking_lines = [
-        f"🎂 Возраст: {data.get('partner_age', '-')}",
-        f"🌍 Национальность: {data.get('partner_nationality_pref', '-')}",
-        f"⭐ Самое важное: {data.get('partner_priority', '-')}",
+        f"🎂 <b>Возраст:</b> {data.get('partner_age', '-')}",
+        f"🌍 <b>Нация:</b> {data.get('partner_nationality_pref', '-')}",
+        f"🕌 <b>Религия:</b> {data.get('partner_priority', '-')}",
     ]
 
     about_text = "\n".join(about_lines)
@@ -213,7 +214,6 @@ def build_preview_text(gender: str, data: dict) -> tuple[str, str, str]:
 
     pretty = (
         "Проверьте анкету перед сохранением:\n\n"
-        f"🧑‍⚖️ Вы: {gender_label(gender)}\n\n"
         "🟦 О себе:\n"
         f"{about_text}\n\n"
         "🟩 Кого ищу:\n"
@@ -279,7 +279,7 @@ async def start_profile(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(Questionnaire.name, F.data == "name:HIDE")
 async def q_name_hide(call: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(name="Скрыто")
+    await state.update_data(name="При знакомстве")
     await state.set_state(Questionnaire.age)
     await call.message.answer("2) 🎂 Сколько вам лет? (напишите число, например 27)")
     await call.answer()
@@ -305,7 +305,7 @@ async def q_age(message: Message, state: FSMContext) -> None:
 
     await state.update_data(age=text)
     await state.set_state(Questionnaire.nationality)
-    await message.answer("3) 🌍 Ваша национальность:", reply_markup=nationality_kb())
+    await message.answer("3) 🌍 Ваша нация:", reply_markup=nationality_kb())
 
 
 @router.callback_query(Questionnaire.nationality, F.data.startswith("nat:"))
@@ -313,7 +313,7 @@ async def q_nationality(call: CallbackQuery, state: FSMContext) -> None:
     val = call.data.split(":", 1)[1]
     if val == "OTHER":
         await state.set_state(Questionnaire.nationality_other)
-        await call.message.answer("🌍 Напишите вашу национальность (свободно):")
+        await call.message.answer("🌍 Напишите вашу нацию (свободно):")
         await call.answer()
         return
 
@@ -327,7 +327,7 @@ async def q_nationality(call: CallbackQuery, state: FSMContext) -> None:
 async def q_nationality_other(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     if len(text) < 2:
-        await message.answer("Напишите национальность чуть понятнее (минимум 2 символа).")
+        await message.answer("Напишите нацию чуть понятнее (минимум 2 символа).")
         return
 
     await state.update_data(nationality=text)
@@ -398,7 +398,7 @@ async def q_partner_age(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(partner_age=text)
     await state.set_state(Questionnaire.partner_nationality_pref)
-    await message.answer("11) 🌍 Национальность будущего супруга(и):", reply_markup=partner_nat_kb())
+    await message.answer("11) 🌍 Нация будущего супруга(и):", reply_markup=partner_nat_kb())
 
 
 @router.callback_query(Questionnaire.partner_nationality_pref, F.data.startswith("pn:"))
@@ -406,13 +406,13 @@ async def q_partner_nat(call: CallbackQuery, state: FSMContext) -> None:
     val = call.data.split(":", 1)[1]
     if val == "CONCRETE":
         await state.set_state(Questionnaire.partner_nationality_custom)
-        await call.message.answer("🌍 Напишите национальность, которую вы предпочитаете (или несколько):")
+        await call.message.answer("🌍 Напишите нацию, которую вы предпочитаете (или несколько):")
         await call.answer()
         return
 
     await state.update_data(partner_nationality_pref=val)
     await state.set_state(Questionnaire.partner_priority)
-    await call.message.answer("12) ⭐ Что для вас самое важное в будущем супруге(е)?", reply_markup=partner_priority_kb())
+    await call.message.answer("12) 🕌 Религия будущего супруга(и):", reply_markup=partner_priority_kb())
     await call.answer()
 
 
@@ -424,7 +424,7 @@ async def q_partner_nat_custom(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(partner_nationality_pref=text)
     await state.set_state(Questionnaire.partner_priority)
-    await message.answer("12) ⭐ Что для вас самое важное в будущем супруге(е)?", reply_markup=partner_priority_kb())
+    await message.answer("12) 🕌 Религия будущего супруга(и):", reply_markup=partner_priority_kb())
 
 
 @router.callback_query(Questionnaire.partner_priority, F.data.startswith("pp:"))
@@ -447,14 +447,14 @@ async def q_contact_info(message: Message, state: FSMContext) -> None:
     await state.update_data(contact_info=text)
     await state.set_state(Questionnaire.preview)
 
+    data = await state.get_data()
+    _about_text, _looking_text, pretty = build_preview_text(data)
+
     user = await get_user(message.from_user.id)
     gender = user.gender if user and user.gender else "BROTHER"
 
-    data = await state.get_data()
-    _about_text, _looking_text, pretty = build_preview_text(gender, data)
-
     await send_icon_if_exists(message, gender)
-    await message.answer(pretty, reply_markup=preview_kb())
+    await message.answer(pretty, reply_markup=preview_kb(), parse_mode="HTML")
 
 
 @router.callback_query(Questionnaire.preview, F.data == "profile:edit")
@@ -558,21 +558,26 @@ async def find_handler(message: Message, state: FSMContext) -> None:
         caption = (
             f"Анкета #{profile.id}\n"
             f"🧑‍⚖️ {gender_label(u.gender)}\n\n"
-            f"👤 Имя: {profile.name or '-'}\n"
-            f"🎂 Возраст: {profile.age or '-'}\n"
-            f"🌍 Национальность: {profile.nationality or '-'}\n"
-            f"🏙️ Город: {profile.city or '-'}\n"
-            f"💍 Статус: {profile.marital_status or '-'}\n"
-            f"👶 Дети: {profile.children or '-'}\n"
-            f"🕌 Намаз: {profile.prayer or '-'}\n"
-            f"🧳 Переезд: {profile.relocation or '-'}\n\n"
-            f"✍️ О себе: {(profile.extra_about or '').strip() or '-'}\n"
+            f"🎂 <b>Возраст:</b> {profile.age or '-'}\n"
+            f"🌍 <b>Нация:</b> {profile.nationality or '-'}\n"
+            f"💍 <b>Статус:</b> {profile.marital_status or '-'}\n"
+            "────────────\n"
+            f"👤 <b>Имя:</b> {profile.name or '-'}\n"
+            f"🏙️ <b>Город:</b> {profile.city or '-'}\n"
+            f"👶 <b>Дети:</b> {profile.children or '-'}\n"
+            f"🕌 <b>Намаз:</b> {profile.prayer or '-'}\n"
+            f"🧳 <b>Переезд:</b> {profile.relocation or '-'}\n\n"
+            f"✍️ <b>О себе:</b> {(profile.extra_about or '').strip() or '-'}\n"
             "🔒 Контакты скрыты\n"
         )
         if img and img.exists():
-            await message.answer_photo(FSInputFile(img), caption=caption[:1024])
+            await message.answer_photo(
+                FSInputFile(img),
+                caption=caption[:1024],
+                parse_mode="HTML",
+            )
         else:
-            await message.answer(caption)
+            await message.answer(caption, parse_mode="HTML")
 
     await message.answer("✨ Это все найденные анкеты. Хотите обновить свою? Нажмите 👤 Моя анкета.")
 
@@ -599,22 +604,23 @@ async def my_profile(message: Message, state: FSMContext) -> None:
 
     caption = (
         "🧾 Ваша анкета:\n\n"
-        f"👤 Имя: {profile.name or '-'}\n"
-        f"🎂 Возраст: {profile.age or '-'}\n"
-        f"🌍 Национальность: {profile.nationality or '-'}\n"
-        f"🏙️ Город: {profile.city or '-'}\n"
-        f"💍 Статус: {profile.marital_status or '-'}\n"
-        f"👶 Дети: {profile.children or '-'}\n"
-        f"🕌 Намаз: {profile.prayer or '-'}\n"
-        f"🧳 Переезд: {profile.relocation or '-'}\n"
-        f"✍️ О себе: {(profile.extra_about or '').strip() or '-'}\n"
-        f"🎯 Ищу возраст: {profile.partner_age or '-'}\n"
-        f"🌍 Ищу национальность: {profile.partner_nationality_pref or '-'}\n"
-        f"⭐ Главное: {profile.partner_priority or '-'}\n"
-        f"📩 Контакты (скрыты): {profile.contact_info or '-'}\n"
+        f"🎂 <b>Возраст:</b> {profile.age or '-'}\n"
+        f"🌍 <b>Нация:</b> {profile.nationality or '-'}\n"
+        f"💍 <b>Статус:</b> {profile.marital_status or '-'}\n"
+        "────────────\n"
+        f"👤 <b>Имя:</b> {profile.name or '-'}\n"
+        f"🏙️ <b>Город:</b> {profile.city or '-'}\n"
+        f"👶 <b>Дети:</b> {profile.children or '-'}\n"
+        f"🕌 <b>Намаз:</b> {profile.prayer or '-'}\n"
+        f"🧳 <b>Переезд:</b> {profile.relocation or '-'}\n"
+        f"✍️ <b>О себе:</b> {(profile.extra_about or '').strip() or '-'}\n"
+        f"🎯 <b>Ищу возраст:</b> {profile.partner_age or '-'}\n"
+        f"🌍 <b>Ищу нацию:</b> {profile.partner_nationality_pref or '-'}\n"
+        f"🕌 <b>Религия:</b> {profile.partner_priority or '-'}\n"
+        f"📩 <b>Контакты (скрыты):</b> {profile.contact_info or '-'}\n"
         "🔒 Контакты не отображаются в поиске."
     )
-    await message.answer(caption, reply_markup=my_profile_kb())
+    await message.answer(caption, reply_markup=my_profile_kb(), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "myprofile:view")
