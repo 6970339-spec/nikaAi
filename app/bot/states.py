@@ -19,5 +19,6 @@ class Questionnaire(StatesGroup):
     partner_nationality_pref = State()
     partner_nationality_custom = State()
     partner_priority = State()
+    contact_info = State()
 
     preview = State()

@@ -45,6 +45,7 @@ class Profile(Base):
     partner_age: Mapped[str | None] = mapped_column(String(32), nullable=True)
     partner_nationality_pref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     partner_priority: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    contact_info: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     # “Полный текст” для будущего ИИ
     about_me_text: Mapped[str] = mapped_column(Text, default="")
