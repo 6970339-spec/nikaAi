@@ -25,10 +25,10 @@ def extract_profile_attributes_free_text(text: str) -> list[dict[str, Any]]:
         "Пример: [{\"attribute\":\"хобби\",\"value\":\"чтение\"}].\n\n"
         f"Текст:\n{text}"
     )
-    response = client.responses.create(
-        model="gpt-4.1-nano",
-        input=[{"role": "user", "content": prompt}],
-        response_format={
+    request_payload = {
+        "model": "gpt-4.1-nano",
+        "input": [{"role": "user", "content": prompt}],
+        "response_format": {
             "type": "json_schema",
             "json_schema": {
                 "name": "profile_attributes",
@@ -46,7 +46,12 @@ def extract_profile_attributes_free_text(text: str) -> list[dict[str, Any]]:
                 },
             },
         },
-    )
+    }
+    try:
+        response = client.responses.create(**request_payload)
+    except TypeError:
+        request_payload.pop("response_format", None)
+        response = client.responses.create(**request_payload)
     output_text = response.output_text.strip()
     try:
         return json.loads(output_text)
