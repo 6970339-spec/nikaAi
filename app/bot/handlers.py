@@ -19,6 +19,7 @@ from aiogram.types.input_file import FSInputFile
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.ai.attribute_extractor import extract_profile_attributes_free_text
 from app.bot.states import Questionnaire
 from app.db.models import Profile, User
 from app.db.session import SessionFactory
@@ -609,6 +610,13 @@ async def preview_confirm(call: CallbackQuery, state: FSMContext) -> None:
             return
 
         data = await state.get_data()
+        free_text = (data.get("extra_about") or "").strip()
+        if free_text:
+            try:
+                attributes = extract_profile_attributes_free_text(free_text)
+                logger.info("AI attributes: %s", attributes)
+            except Exception:
+                logger.exception("AI attribute extraction failed")
         await create_profile_for_user(user, data)
 
         await state.clear()
