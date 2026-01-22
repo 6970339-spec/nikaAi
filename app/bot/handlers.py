@@ -477,7 +477,7 @@ async def preview_confirm(call: CallbackQuery, state: FSMContext) -> None:
             return
 
         data = await state.get_data()
-        about_text, looking_text, _pretty = build_preview_text(user.gender, data)
+        about_text, looking_text, _pretty = build_preview_text(data)
 
         async with SessionFactory() as session:
             res = await session.execute(select(User).where(User.telegram_id == call.from_user.id))
