@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from pathlib import Path
 
 from aiogram import F, Router
@@ -33,6 +34,7 @@ SISTER_IMG = APP_DIR / "sister.png"
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="🎲 Быстро заполнить")],
             [KeyboardButton(text="📝 Заполнить/обновить анкету")],
             [KeyboardButton(text="👤 Моя анкета")],
             [KeyboardButton(text="🔎 Найти")],
@@ -147,6 +149,54 @@ def gender_label(gender: str | None) -> str:
     return "Брат" if gender == "BROTHER" else ("Сестра" if gender == "SISTER" else "")
 
 
+def random_profile_data(gender: str | None) -> dict:
+    male_names = ["Али", "Мухаммад", "Омар", "Ахмад", "Ибрагим"]
+    female_names = ["Амина", "Айша", "Фатима", "Зайнаб", "Мариям"]
+    nationalities = [
+        "Таджик(ка)",
+        "Узбек(ка)",
+        "Казах(ка)",
+        "Киргиз(ка)",
+        "Татар(ка)",
+        "Русский(ая) мусульманин(ка)",
+    ]
+    cities = ["Москва, Россия", "Ташкент, Узбекистан", "Душанбе, Таджикистан", "Алматы, Казахстан"]
+    marital_statuses = ["Никогда", "Разведён(а)", "Вдовец/вдова"]
+    children_options = ["Нет", "Да, со мной", "Да, отдельно"]
+    prayers = ["Регулярно", "Иногда", "Хочу начать"]
+    relocations = ["Да", "Нет", "Зависит"]
+    partner_nationals = ["Не важно", "Та же, что у меня", random.choice(nationalities)]
+    partner_priorities = ["Соблюдающий", "Начинающий", "Требующий знания"]
+
+    if gender == "SISTER":
+        name = random.choice(female_names)
+    else:
+        name = random.choice(male_names)
+
+    if random.random() < 0.2:
+        name = "При знакомстве"
+
+    age = str(random.randint(18, 40))
+    partner_age_min = random.randint(18, 30)
+    partner_age = f"{partner_age_min}–{partner_age_min + random.randint(4, 10)}"
+
+    return {
+        "name": name,
+        "age": age,
+        "nationality": random.choice(nationalities),
+        "city": random.choice(cities),
+        "marital_status": random.choice(marital_statuses),
+        "children": random.choice(children_options),
+        "prayer": random.choice(prayers),
+        "relocation": random.choice(relocations),
+        "extra_about": "Люблю читать, путешествовать и развиваться.",
+        "partner_age": partner_age,
+        "partner_nationality_pref": random.choice(partner_nationals),
+        "partner_priority": random.choice(partner_priorities),
+        "contact_info": f"+7{random.randint(9000000000, 9999999999)}",
+    }
+
+
 async def get_or_create_user(tg_id: int, username: str | None) -> User:
     async with SessionFactory() as session:
         res = await session.execute(select(User).where(User.telegram_id == tg_id))
@@ -166,6 +216,43 @@ async def get_user(tg_id: int) -> User | None:
     async with SessionFactory() as session:
         res = await session.execute(select(User).where(User.telegram_id == tg_id))
         return res.scalar_one_or_none()
+
+
+async def create_profile_for_user(user: User, data: dict) -> None:
+    about_text, looking_text, _pretty = build_preview_text(data)
+    async with SessionFactory() as session:
+        res = await session.execute(select(User).where(User.telegram_id == user.telegram_id))
+        db_user = res.scalar_one_or_none()
+        if db_user is None:
+            db_user = User(
+                telegram_id=user.telegram_id,
+                username=user.username,
+                gender=user.gender,
+            )
+            session.add(db_user)
+            await session.flush()
+
+        profile = Profile(
+            user_id=db_user.id,
+            age=data.get("age"),
+            nationality=data.get("nationality"),
+            city=data.get("city"),
+            marital_status=data.get("marital_status"),
+            children=data.get("children"),
+            prayer=data.get("prayer"),
+            relocation=data.get("relocation"),
+            name=data.get("name"),
+            extra_about=(data.get("extra_about") or "").strip(),
+            partner_age=data.get("partner_age"),
+            partner_nationality_pref=data.get("partner_nationality_pref"),
+            partner_priority=data.get("partner_priority"),
+            contact_info=data.get("contact_info"),
+            about_me_text=about_text,
+            looking_for_text=looking_text,
+            status="ACTIVE",
+        )
+        session.add(profile)
+        await session.commit()
 
 
 async def ensure_gender_or_ask(message: Message, state: FSMContext) -> User | None:
@@ -275,6 +362,27 @@ async def start_profile(message: Message, state: FSMContext) -> None:
     if user is None:
         return
     await start_questionnaire(message, state)
+
+
+@router.message(F.text == "🎲 Быстро заполнить")
+async def quick_fill(message: Message, state: FSMContext) -> None:
+    user = await ensure_gender_or_ask(message, state)
+    if user is None:
+        return
+
+    await state.clear()
+    data = random_profile_data(user.gender)
+    await create_profile_for_user(user, data)
+
+    _about_text, _looking_text, pretty = build_preview_text(data)
+    await send_icon_if_exists(message, user.gender)
+    await message.answer(
+        "✅ Анкета создана автоматически.\n\n"
+        f"{pretty}\n"
+        "Нажмите: 🔎 Найти",
+        reply_markup=main_kb(),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(Questionnaire.name, F.data == "name:HIDE")
@@ -477,41 +585,7 @@ async def preview_confirm(call: CallbackQuery, state: FSMContext) -> None:
             return
 
         data = await state.get_data()
-        about_text, looking_text, _pretty = build_preview_text(data)
-
-        async with SessionFactory() as session:
-            res = await session.execute(select(User).where(User.telegram_id == call.from_user.id))
-            db_user = res.scalar_one_or_none()
-            if db_user is None:
-                db_user = User(
-                    telegram_id=call.from_user.id,
-                    username=call.from_user.username,
-                    gender=user.gender,
-                )
-                session.add(db_user)
-                await session.flush()
-
-            profile = Profile(
-                user_id=db_user.id,
-                age=data.get("age"),
-                nationality=data.get("nationality"),
-                city=data.get("city"),
-                marital_status=data.get("marital_status"),
-                children=data.get("children"),
-                prayer=data.get("prayer"),
-                relocation=data.get("relocation"),
-                name=data.get("name"),
-                extra_about=(data.get("extra_about") or "").strip(),
-                partner_age=data.get("partner_age"),
-                partner_nationality_pref=data.get("partner_nationality_pref"),
-                partner_priority=data.get("partner_priority"),
-                contact_info=data.get("contact_info"),
-                about_me_text=about_text,
-                looking_for_text=looking_text,
-                status="ACTIVE",
-            )
-            session.add(profile)
-            await session.commit()
+        await create_profile_for_user(user, data)
 
         await state.clear()
         await call.message.answer("✅ Анкета сохранена.\n\nНажмите: 🔎 Найти", reply_markup=main_kb())
