@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from app.ai.attribute_extractor import extract_profile_attributes_free_text
 import logging
 import random
 from pathlib import Path
