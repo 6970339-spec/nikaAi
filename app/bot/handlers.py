@@ -34,7 +34,10 @@ SISTER_IMG = APP_DIR / "sister.png"
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🎲 Быстро заполнить")],
+            [
+                KeyboardButton(text="🎲 Быстро заполнить (брат)"),
+                KeyboardButton(text="🎲 Быстро заполнить (сестра)"),
+            ],
             [KeyboardButton(text="📝 Заполнить/обновить анкету")],
             [KeyboardButton(text="👤 Моя анкета")],
             [KeyboardButton(text="🔎 Найти")],
@@ -218,6 +221,21 @@ async def get_user(tg_id: int) -> User | None:
         return res.scalar_one_or_none()
 
 
+async def update_user_gender(tg_id: int, username: str | None, gender: str) -> User:
+    async with SessionFactory() as session:
+        res = await session.execute(select(User).where(User.telegram_id == tg_id))
+        user = res.scalar_one_or_none()
+        if user is None:
+            user = User(telegram_id=tg_id, username=username, gender=gender)
+            session.add(user)
+        else:
+            user.gender = gender
+            user.username = username
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
 async def create_profile_for_user(user: User, data: dict) -> None:
     about_text, looking_text, _pretty = build_preview_text(data)
     async with SessionFactory() as session:
@@ -364,14 +382,10 @@ async def start_profile(message: Message, state: FSMContext) -> None:
     await start_questionnaire(message, state)
 
 
-@router.message(F.text == "🎲 Быстро заполнить")
-async def quick_fill(message: Message, state: FSMContext) -> None:
-    user = await ensure_gender_or_ask(message, state)
-    if user is None:
-        return
-
+async def handle_quick_fill(message: Message, state: FSMContext, gender: str) -> None:
     await state.clear()
-    data = random_profile_data(user.gender)
+    user = await update_user_gender(message.from_user.id, message.from_user.username, gender)
+    data = random_profile_data(gender)
     await create_profile_for_user(user, data)
 
     _about_text, _looking_text, pretty = build_preview_text(data)
@@ -383,6 +397,16 @@ async def quick_fill(message: Message, state: FSMContext) -> None:
         reply_markup=main_kb(),
         parse_mode="HTML",
     )
+
+
+@router.message(F.text == "🎲 Быстро заполнить (брат)")
+async def quick_fill_brother(message: Message, state: FSMContext) -> None:
+    await handle_quick_fill(message, state, "BROTHER")
+
+
+@router.message(F.text == "🎲 Быстро заполнить (сестра)")
+async def quick_fill_sister(message: Message, state: FSMContext) -> None:
+    await handle_quick_fill(message, state, "SISTER")
 
 
 @router.callback_query(Questionnaire.name, F.data == "name:HIDE")
