@@ -5,12 +5,17 @@ from typing import Any
 
 from openai import OpenAI
 
+from app.core.config import settings
+
 
 def extract_profile_attributes_free_text(text: str) -> list[dict[str, Any]]:
     if not text.strip():
         return []
 
-    client = OpenAI()
+    api_key = settings.openai_api_key
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    client = OpenAI(api_key=api_key)
     prompt = (
         "Извлеки атрибуты из текста анкеты. "
         "Верни только JSON-массив объектов без пояснений. "
