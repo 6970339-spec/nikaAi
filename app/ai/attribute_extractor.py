@@ -21,7 +21,7 @@ def extract_profile_attributes_free_text(text: str) -> list[dict[str, Any]]:
     client = OpenAI(api_key=api_key)
     prompt = (
         "Извлеки атрибуты из текста анкеты. "
-        "Верни только JSON-массив объектов без пояснений. "
+        "Ответь только чистым JSON-массивом объектов без markdown, без кодовых блоков и без пояснений. "
         "Пример: [{\"attribute\":\"хобби\",\"value\":\"чтение\"}].\n\n"
         f"Текст:\n{text}"
     )
@@ -53,6 +53,12 @@ def extract_profile_attributes_free_text(text: str) -> list[dict[str, Any]]:
         request_payload.pop("response_format", None)
         response = client.responses.create(**request_payload)
     output_text = response.output_text.strip()
+    if output_text.startswith("```"):
+        parts = output_text.split("```")
+        if len(parts) >= 3:
+            output_text = parts[1].strip()
+            if output_text.startswith("json"):
+                output_text = output_text[4:].strip()
     try:
         return json.loads(output_text)
     except json.JSONDecodeError:
