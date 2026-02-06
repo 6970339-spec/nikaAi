@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     admin_chat_id: int | None = None
     db_url: str = "sqlite+aiosqlite:///./bot.db"
     openai_api_key: str | None = None
+    openai_model: str = "gpt-5-nano"
 
     model_config = SettingsConfigDict(
         env_file=".env",

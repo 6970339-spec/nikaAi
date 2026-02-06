@@ -2,23 +2,12 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class Questionnaire(StatesGroup):
-    # О себе
-    name = State()
     age = State()
+    location = State()
     nationality = State()
-    nationality_other = State()
-    city = State()
+    aqida_manhaj = State()
     marital_status = State()
     children = State()
-    prayer = State()
-    relocation = State()
-    extra_about = State()
-
-    # Кого ищу
-    partner_age = State()
-    partner_nationality_pref = State()
-    partner_nationality_custom = State()
-    partner_priority = State()
-    contact_info = State()
-
+    polygyny_attitude = State()
+    free_text = State()
     preview = State()

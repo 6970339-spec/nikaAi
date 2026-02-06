@@ -28,6 +28,7 @@ async def _ensure_column(conn, table: str, col: str, sql_type: str) -> None:
 async def init_db() -> None:
     # важно: импортируем модели, чтобы Base.metadata знала о таблицах
     from app.db import models  # noqa: F401
+    from app.db.seed import seed_canonical_attributes
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -46,6 +47,8 @@ async def init_db() -> None:
         await _ensure_column(conn, "profiles", "relocation", "VARCHAR(32)")
         await _ensure_column(conn, "profiles", "goal", "VARCHAR(32)")
         await _ensure_column(conn, "profiles", "extra_about", "TEXT")
+        await _ensure_column(conn, "profiles", "aqida", "VARCHAR(32)")
+        await _ensure_column(conn, "profiles", "polygyny", "VARCHAR(32)")
 
         await _ensure_column(conn, "profiles", "partner_age", "VARCHAR(32)")
         await _ensure_column(conn, "profiles", "partner_nationality_pref", "VARCHAR(64)")
@@ -53,3 +56,6 @@ async def init_db() -> None:
 
         await _ensure_column(conn, "profiles", "about_me_text", "TEXT")
         await _ensure_column(conn, "profiles", "looking_for_text", "TEXT")
+
+    async with SessionFactory() as session:
+        await seed_canonical_attributes(session)

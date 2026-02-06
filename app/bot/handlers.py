@@ -1,11 +1,13 @@
 from __future__ import annotations
-from app.ai.attribute_extractor import extract_profile_attributes_free_text
+
+import asyncio
 import logging
 import random
 from pathlib import Path
+from typing import Any
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -19,8 +21,9 @@ from aiogram.types.input_file import FSInputFile
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.ai.attribute_extractor import extract_profile_attributes_free_text
+from app.ai.attribute_extractor import extract_profile_attributes_free_text_async
 from app.bot.states import Questionnaire
+from app.db.attribute_service import map_extracted_item_to_attribute, get_attribute_by_key, upsert_profile_attribute_value
 from app.db.models import Profile, User
 from app.db.session import SessionFactory
 
@@ -30,6 +33,41 @@ logger = logging.getLogger(__name__)
 APP_DIR = Path(__file__).resolve().parents[1]
 BROTHER_IMG = APP_DIR / "brother.png"
 SISTER_IMG = APP_DIR / "sister.png"
+
+AQIDA_LABELS = {
+    "AHLU_SUNNA": "Ахлю-Сунна",
+    "SALAFI": "Саляфи",
+    "OTHER": "Другое",
+    "UNKNOWN": "Не знаю",
+}
+
+MARITAL_LABELS = {
+    "NEVER_MARRIED": "Не был(а) женат(а)",
+    "MARRIED": "Женат/замужем",
+    "DIVORCED": "В разводе",
+    "WIDOWED": "Вдовец/вдова",
+}
+
+CHILDREN_LABELS = {
+    "NONE": "Нет",
+    "HAS_1": "Есть: 1",
+    "HAS_2": "Есть: 2",
+    "HAS_3PLUS": "Есть: 3+",
+    "UNKNOWN": "Не хочу указывать",
+}
+
+POLYGYNY_LABELS_BROTHER = {
+    "MONOGAMY_ONLY": "Хочу только единобрачие",
+    "OPEN_TO_POLYGYNY": "Допускаю многоженство",
+    "SEEKS_POLYGYNY": "Хочу/планирую многоженство",
+    "NEUTRAL": "Не важно/не обсуждал",
+}
+
+POLYGYNY_LABELS_SISTER = {
+    "MONOGAMY_ONLY": "Хочу только единобрачие",
+    "OPEN_TO_POLYGYNY": "Допускаю многоженство",
+    "NEUTRAL": "Не важно/не обсуждала",
+}
 
 
 def main_kb() -> ReplyKeyboardMarkup:
@@ -41,7 +79,7 @@ def main_kb() -> ReplyKeyboardMarkup:
             ],
             [KeyboardButton(text="📝 Заполнить/обновить анкету")],
             [KeyboardButton(text="👤 Моя анкета")],
-            [KeyboardButton(text="🔎 Найти")],
+            [KeyboardButton(text="🔍 Найти")],
         ],
         resize_keyboard=True,
         selective=True,
@@ -68,77 +106,67 @@ def kb_from_rows(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     )
 
 
-def nationality_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("Таджик(ка)", "nat:Таджик(ка)"), ("Узбек(ка)", "nat:Узбек(ка)")],
-        [("Казах(ка)", "nat:Казах(ка)"), ("Киргиз(ка)", "nat:Киргиз(ка)")],
-        [("Татар(ка)", "nat:Татар(ка)"), ("Русский(ая) мусульманин(ка)", "nat:Русский(ая) мусульманин(ка)")],
-        [("Другое (написать)", "nat:OTHER")],
-    ])
+def aqida_kb() -> InlineKeyboardMarkup:
+    return kb_from_rows(
+        [
+            [("Ахлю-Сунна", "aq:AHLU_SUNNA"), ("Саляфи", "aq:SALAFI")],
+            [("Другое", "aq:OTHER"), ("Не знаю", "aq:UNKNOWN")],
+        ]
+    )
 
 
 def marital_status_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("Никогда не был(а) в браке", "ms:Никогда")],
-        [("Разведён(а)", "ms:Разведён(а)"), ("Вдовец/вдова", "ms:Вдовец/вдова")],
-    ])
+    return kb_from_rows(
+        [
+            [("Не был(а) женат(а)", "ms:NEVER_MARRIED")],
+            [("Женат/замужем", "ms:MARRIED")],
+            [("В разводе", "ms:DIVORCED"), ("Вдовец/вдова", "ms:WIDOWED")],
+        ]
+    )
 
 
 def children_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("Нет", "ch:Нет")],
-        [("Да, живут со мной", "ch:Да, со мной")],
-        [("Да, живут отдельно", "ch:Да, отдельно")],
-    ])
+    return kb_from_rows(
+        [
+            [("Нет", "ch:NONE"), ("Есть: 1", "ch:HAS_1")],
+            [("Есть: 2", "ch:HAS_2"), ("Есть: 3+", "ch:HAS_3PLUS")],
+            [("Не хочу указывать", "ch:UNKNOWN")],
+        ]
+    )
 
 
-def prayer_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("Да, регулярно", "pr:Регулярно")],
-        [("Иногда", "pr:Иногда")],
-        [("Пока нет, но хочу", "pr:Хочу начать")],
-    ])
-
-
-def relocation_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("Да", "rel:Да"), ("Нет", "rel:Нет")],
-        [("Зависит от обстоятельств", "rel:Зависит")],
-    ])
-
-
-def name_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("Скрыть имя (при знакомстве)", "name:HIDE")],
-    ])
-
-
-def partner_nat_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("Не важно", "pn:Не важно")],
-        [("Та же, что у меня", "pn:Та же, что у меня")],
-        [("Конкретно указать", "pn:CONCRETE")],
-    ])
-
-
-def partner_priority_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("Соблюдающий", "pp:Соблюдающий"), ("Начинающий", "pp:Начинающий")],
-        [("Требующий знания", "pp:Требующий знания")],
-    ])
+def polygyny_kb(gender: str | None) -> InlineKeyboardMarkup:
+    if gender == "SISTER":
+        rows = [
+            [("Хочу только единобрачие", "poly:MONOGAMY_ONLY")],
+            [("Допускаю многоженство", "poly:OPEN_TO_POLYGYNY")],
+            [("Не важно/не обсуждала", "poly:NEUTRAL")],
+        ]
+    else:
+        rows = [
+            [("Хочу только единобрачие", "poly:MONOGAMY_ONLY")],
+            [("Допускаю многоженство", "poly:OPEN_TO_POLYGYNY")],
+            [("Хочу/планирую многоженство", "poly:SEEKS_POLYGYNY")],
+            [("Не важно/не обсуждал", "poly:NEUTRAL")],
+        ]
+    return kb_from_rows(rows)
 
 
 def preview_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("✅ Подтвердить", "profile:confirm")],
-        [("✏️ Изменить", "profile:edit")],
-    ])
+    return kb_from_rows(
+        [
+            [("✅ Подтвердить", "profile:confirm")],
+            [("✏️ Изменить", "profile:edit")],
+        ]
+    )
 
 
 def my_profile_kb() -> InlineKeyboardMarkup:
-    return kb_from_rows([
-        [("👀 Смотреть", "myprofile:view"), ("✏️ Изменить", "myprofile:edit")],
-    ])
+    return kb_from_rows(
+        [
+            [("👀 Смотреть", "myprofile:view"), ("✏️ Изменить", "myprofile:edit")],
+        ]
+    )
 
 
 def icon_path(gender: str | None) -> Path | None:
@@ -153,9 +181,39 @@ def gender_label(gender: str | None) -> str:
     return "Брат" if gender == "BROTHER" else ("Сестра" if gender == "SISTER" else "")
 
 
-def random_profile_data(gender: str | None) -> dict:
-    male_names = ["Али", "Мухаммад", "Омар", "Ахмад", "Ибрагим"]
-    female_names = ["Амина", "Айша", "Фатима", "Зайнаб", "Мариям"]
+def _label(value: str | None, mapping: dict[str, str]) -> str:
+    if not value:
+        return "-"
+    return mapping.get(value, value)
+
+
+def _short(text: str | None, limit: int = 300) -> str:
+    text = (text or "").strip()
+    if not text:
+        return "-"
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def build_preview_text(data: dict) -> str:
+    free_text = _short(data.get("free_text"))
+    lines = [
+        "Проверьте анкету перед сохранением:\n",
+        f"🎂 <b>Возраст:</b> {data.get('age', '-')}",
+        f"📍 <b>Локация:</b> {data.get('location', '-')}",
+        f"🌍 <b>Национальность:</b> {data.get('nationality', '-')}",
+        f"🕌 <b>Акъыда/манхадж:</b> {_label(data.get('aqida_manhaj'), AQIDA_LABELS)}",
+        f"💍 <b>Семейное положение:</b> {_label(data.get('marital_status'), MARITAL_LABELS)}",
+        f"👶 <b>Дети:</b> {_label(data.get('children'), CHILDREN_LABELS)}",
+        f"👫 <b>Отношение к многоженству:</b> {data.get('polygyny_label', '-')}",
+        "──────────────────",
+        f"✍️ <b>О себе:</b> {free_text}",
+    ]
+    return "\n".join(lines)
+
+
+def random_profile_data(gender: str | None) -> dict[str, Any]:
     nationalities = [
         "Таджик(ка)",
         "Узбек(ка)",
@@ -164,40 +222,29 @@ def random_profile_data(gender: str | None) -> dict:
         "Татар(ка)",
         "Русский(ая) мусульманин(ка)",
     ]
-    cities = ["Москва, Россия", "Ташкент, Узбекистан", "Душанбе, Таджикистан", "Алматы, Казахстан"]
-    marital_statuses = ["Никогда", "Разведён(а)", "Вдовец/вдова"]
-    children_options = ["Нет", "Да, со мной", "Да, отдельно"]
-    prayers = ["Регулярно", "Иногда", "Хочу начать"]
-    relocations = ["Да", "Нет", "Зависит"]
-    partner_nationals = ["Не важно", "Та же, что у меня", random.choice(nationalities)]
-    partner_priorities = ["Соблюдающий", "Начинающий", "Требующий знания"]
-
-    if gender == "SISTER":
-        name = random.choice(female_names)
-    else:
-        name = random.choice(male_names)
-
-    if random.random() < 0.2:
-        name = "При знакомстве"
-
-    age = str(random.randint(18, 40))
-    partner_age_min = random.randint(18, 30)
-    partner_age = f"{partner_age_min}–{partner_age_min + random.randint(4, 10)}"
+    locations = [
+        "Москва, Россия",
+        "Ташкент, Узбекистан",
+        "Душанбе, Таджикистан",
+        "Алматы, Казахстан",
+    ]
+    aqida_codes = list(AQIDA_LABELS.keys())
+    marital_codes = list(MARITAL_LABELS.keys())
+    children_codes = list(CHILDREN_LABELS.keys())
+    polygyny_codes = list(
+        (POLYGYNY_LABELS_SISTER if gender == "SISTER" else POLYGYNY_LABELS_BROTHER).keys()
+    )
 
     return {
-        "name": name,
-        "age": age,
+        "age": str(random.randint(18, 40)),
+        "location": random.choice(locations),
         "nationality": random.choice(nationalities),
-        "city": random.choice(cities),
-        "marital_status": random.choice(marital_statuses),
-        "children": random.choice(children_options),
-        "prayer": random.choice(prayers),
-        "relocation": random.choice(relocations),
-        "extra_about": "Люблю читать, путешествовать и развиваться.",
-        "partner_age": partner_age,
-        "partner_nationality_pref": random.choice(partner_nationals),
-        "partner_priority": random.choice(partner_priorities),
-        "contact_info": f"+7{random.randint(9000000000, 9999999999)}",
+        "aqida_manhaj": random.choice(aqida_codes),
+        "marital_status": random.choice(marital_codes),
+        "children": random.choice(children_codes),
+        "polygyny_attitude": random.choice(polygyny_codes),
+        "free_text": "Люблю читать, развиваться, ценю искренность и уважение. "
+        "Ищу серьезные намерения и общие ценности.",
     }
 
 
@@ -237,8 +284,7 @@ async def update_user_gender(tg_id: int, username: str | None, gender: str) -> U
         return user
 
 
-async def create_profile_for_user(user: User, data: dict) -> None:
-    about_text, looking_text, _pretty = build_preview_text(data)
+async def create_profile_for_user(user: User, data: dict) -> int:
     async with SessionFactory() as session:
         res = await session.execute(select(User).where(User.telegram_id == user.telegram_id))
         db_user = res.scalar_one_or_none()
@@ -255,22 +301,78 @@ async def create_profile_for_user(user: User, data: dict) -> None:
             user_id=db_user.id,
             age=data.get("age"),
             nationality=data.get("nationality"),
-            city=data.get("city"),
+            city=data.get("location"),
             marital_status=data.get("marital_status"),
             children=data.get("children"),
-            prayer=data.get("prayer"),
-            relocation=data.get("relocation"),
-            name=data.get("name"),
-            extra_about=(data.get("extra_about") or "").strip(),
-            partner_age=data.get("partner_age"),
-            partner_nationality_pref=data.get("partner_nationality_pref"),
-            partner_priority=data.get("partner_priority"),
-            contact_info=data.get("contact_info"),
-            about_me_text=about_text,
-            looking_for_text=looking_text,
+            aqida=data.get("aqida_manhaj"),
+            polygyny=data.get("polygyny_attitude"),
+            about_me_text=(data.get("free_text") or "").strip(),
             status="ACTIVE",
         )
         session.add(profile)
+        await session.flush()
+
+        canonical_keys = [
+            "age",
+            "location",
+            "nationality",
+            "aqida_manhaj",
+            "marital_status",
+            "children",
+            "polygyny_attitude",
+        ]
+        enum_keys = {"aqida_manhaj", "marital_status", "children", "polygyny_attitude"}
+        for key in canonical_keys:
+            attr = await get_attribute_by_key(session, key)
+            if attr is None:
+                continue
+            value = data.get(key)
+            if not value:
+                continue
+            option_code = value if key in enum_keys else None
+            await upsert_profile_attribute_value(
+                session=session,
+                profile_id=profile.id,
+                attribute=attr,
+                value=str(value),
+                option_code=option_code,
+                confidence=1.0,
+                evidence=None,
+            )
+
+        await session.commit()
+        return profile.id
+
+
+async def extract_and_persist(profile_id: int, free_text: str) -> None:
+    if not free_text or len(free_text) < 10:
+        return
+    try:
+        items = await extract_profile_attributes_free_text_async(free_text)
+    except Exception:
+        logger.exception("AI attribute extraction failed")
+        return
+
+    async with SessionFactory() as session:
+        for item in items:
+            try:
+                attribute, normalized = await map_extracted_item_to_attribute(session, item)
+                value = str(normalized.get("value", "")).strip()
+                if not value:
+                    continue
+                confidence = float(normalized.get("confidence", 1.0))
+                evidence = normalized.get("evidence")
+                await upsert_profile_attribute_value(
+                    session=session,
+                    profile_id=profile_id,
+                    attribute=attribute,
+                    value=value,
+                    option_code=None,
+                    confidence=confidence,
+                    evidence=evidence,
+                )
+            except Exception:
+                logger.exception("Failed to persist extracted item: %s", item)
         await session.commit()
 
 
@@ -278,54 +380,18 @@ async def ensure_gender_or_ask(message: Message, state: FSMContext) -> User | No
     user = await get_or_create_user(message.from_user.id, message.from_user.username)
     if not user.gender:
         await state.clear()
-        await message.answer("Ассаляму алейкум.\n\nПеред началом выберите, кто вы:", reply_markup=gender_kb())
+        await message.answer(
+            "Ассаляму алейкум.\n\nПеред началом выберите, кто вы:",
+            reply_markup=gender_kb(),
+        )
         return None
     return user
 
 
 async def start_questionnaire(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await state.set_state(Questionnaire.name)
-    await message.answer(
-        "1) 👤 Как вас зовут? Можете написать имя или скрыть до знакомства.",
-        reply_markup=name_kb(),
-    )
-
-
-def build_preview_text(data: dict) -> tuple[str, str, str]:
-    about_lines = [
-        f"🎂 <b>Возраст:</b> {data.get('age', '-')}",
-        f"🌍 <b>Нация:</b> {data.get('nationality', '-')}",
-        f"💍 <b>Статус:</b> {data.get('marital_status', '-')}",
-        "────────────",
-        f"👤 <b>Имя:</b> {data.get('name', '-')}",
-        f"🏙️ <b>Город/страна:</b> {data.get('city', '-')}",
-        f"👶 <b>Дети:</b> {data.get('children', '-')}",
-        f"🕌 <b>Намаз:</b> {data.get('prayer', '-')}",
-        f"🧳 <b>Переезд:</b> {data.get('relocation', '-')}",
-        f"📩 <b>Контакты (скрыты):</b> {data.get('contact_info', '-')}",
-    ]
-    extra = (data.get("extra_about") or "").strip()
-    if extra:
-        about_lines.append(f"<b>О себе:</b> {extra}")
-
-    looking_lines = [
-        f"🎂 <b>Возраст:</b> {data.get('partner_age', '-')}",
-        f"🌍 <b>Нация:</b> {data.get('partner_nationality_pref', '-')}",
-        f"🕌 <b>Религия:</b> {data.get('partner_priority', '-')}",
-    ]
-
-    about_text = "\n".join(about_lines)
-    looking_text = "\n".join(looking_lines)
-
-    pretty = (
-        "Проверьте анкету перед сохранением:\n\n"
-        "🟦 О себе:\n"
-        f"{about_text}\n\n"
-        "🟩 Кого ищу:\n"
-        f"{looking_text}\n"
-    )
-    return about_text, looking_text, pretty
+    await state.set_state(Questionnaire.age)
+    await message.answer("1) 🎂 Сколько вам лет? (16–80)")
 
 
 async def send_icon_if_exists(message: Message, gender: str | None) -> None:
@@ -387,14 +453,23 @@ async def handle_quick_fill(message: Message, state: FSMContext, gender: str) ->
     await state.clear()
     user = await update_user_gender(message.from_user.id, message.from_user.username, gender)
     data = random_profile_data(gender)
-    await create_profile_for_user(user, data)
+    profile_id = await create_profile_for_user(user, data)
+    asyncio.create_task(extract_and_persist(profile_id, data.get("free_text") or ""))
 
-    _about_text, _looking_text, pretty = build_preview_text(data)
+    pretty = build_preview_text(
+        {
+            **data,
+            "polygyny_label": _label(
+                data.get("polygyny_attitude"),
+                POLYGYNY_LABELS_SISTER if gender == "SISTER" else POLYGYNY_LABELS_BROTHER,
+            ),
+        }
+    )
     await send_icon_if_exists(message, user.gender)
     await message.answer(
         "✅ Анкета создана автоматически.\n\n"
         f"{pretty}\n"
-        "Нажмите: 🔎 Найти",
+        "Нажмите: 🔍 Найти",
         reply_markup=main_kb(),
         parse_mode="HTML",
     )
@@ -410,25 +485,6 @@ async def quick_fill_sister(message: Message, state: FSMContext) -> None:
     await handle_quick_fill(message, state, "SISTER")
 
 
-@router.callback_query(Questionnaire.name, F.data == "name:HIDE")
-async def q_name_hide(call: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(name="При знакомстве")
-    await state.set_state(Questionnaire.age)
-    await call.message.answer("2) 🎂 Сколько вам лет? (напишите число, например 27)")
-    await call.answer()
-
-
-@router.message(Questionnaire.name)
-async def q_name(message: Message, state: FSMContext) -> None:
-    text = (message.text or "").strip()
-    if len(text) < 2:
-        await message.answer("Введите имя (минимум 2 символа) или выберите вариант скрыть имя.")
-        return
-    await state.update_data(name=text)
-    await state.set_state(Questionnaire.age)
-    await message.answer("2) 🎂 Сколько вам лет? (напишите число, например 27)")
-
-
 @router.message(Questionnaire.age)
 async def q_age(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
@@ -437,47 +493,40 @@ async def q_age(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(age=text)
-    await state.set_state(Questionnaire.nationality)
-    await message.answer("3) 🌍 Ваша нация:", reply_markup=nationality_kb())
+    await state.set_state(Questionnaire.location)
+    await message.answer("2) 📍 Где вы живете сейчас? (город, страна)")
 
 
-@router.callback_query(Questionnaire.nationality, F.data.startswith("nat:"))
-async def q_nationality(call: CallbackQuery, state: FSMContext) -> None:
-    val = call.data.split(":", 1)[1]
-    if val == "OTHER":
-        await state.set_state(Questionnaire.nationality_other)
-        await call.message.answer("🌍 Напишите вашу нацию (свободно):")
-        await call.answer()
-        return
-
-    await state.update_data(nationality=val)
-    await state.set_state(Questionnaire.city)
-    await call.message.answer("4) 🏙️ Где вы живёте сейчас? (город, страна)")
-    await call.answer()
-
-
-@router.message(Questionnaire.nationality_other)
-async def q_nationality_other(message: Message, state: FSMContext) -> None:
+@router.message(Questionnaire.location)
+async def q_location(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     if len(text) < 2:
-        await message.answer("Напишите нацию чуть понятнее (минимум 2 символа).")
+        await message.answer("Укажите локацию (минимум 2 символа).")
+        return
+
+    await state.update_data(location=text)
+    await state.set_state(Questionnaire.nationality)
+    await message.answer("3) 🌍 Ваша национальность/этнос?")
+
+
+@router.message(Questionnaire.nationality)
+async def q_nationality(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if len(text) < 2:
+        await message.answer("Укажите национальность (минимум 2 символа).")
         return
 
     await state.update_data(nationality=text)
-    await state.set_state(Questionnaire.city)
-    await message.answer("4) 🏙️ Где вы живёте сейчас? (город, страна)")
+    await state.set_state(Questionnaire.aqida_manhaj)
+    await message.answer("4) 🕌 Ваша акъыда/манхадж:", reply_markup=aqida_kb())
 
 
-@router.message(Questionnaire.city)
-async def q_city(message: Message, state: FSMContext) -> None:
-    text = (message.text or "").strip()
-    if len(text) < 2:
-        await message.answer("Укажите город/страну (минимум 2 символа).")
-        return
-
-    await state.update_data(city=text)
+@router.callback_query(Questionnaire.aqida_manhaj, F.data.startswith("aq:"))
+async def q_aqida(call: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(aqida_manhaj=call.data.split(":", 1)[1])
     await state.set_state(Questionnaire.marital_status)
-    await message.answer("5) 💍 Ваш текущий семейный статус:", reply_markup=marital_status_kb())
+    await call.message.answer("5) 💍 Ваш семейный статус:", reply_markup=marital_status_kb())
+    await call.answer()
 
 
 @router.callback_query(Questionnaire.marital_status, F.data.startswith("ms:"))
@@ -491,100 +540,46 @@ async def q_marital(call: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(Questionnaire.children, F.data.startswith("ch:"))
 async def q_children(call: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(children=call.data.split(":", 1)[1])
-    await state.set_state(Questionnaire.prayer)
-    await call.message.answer("7) 🕌 Совершаете ли вы намаз?", reply_markup=prayer_kb())
-    await call.answer()
-
-
-@router.callback_query(Questionnaire.prayer, F.data.startswith("pr:"))
-async def q_prayer(call: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(prayer=call.data.split(":", 1)[1])
-    await state.set_state(Questionnaire.relocation)
-    await call.message.answer("8) 🧳 Рассматриваете ли вы переезд после брака?", reply_markup=relocation_kb())
-    await call.answer()
-
-
-@router.callback_query(Questionnaire.relocation, F.data.startswith("rel:"))
-async def q_relocation(call: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(relocation=call.data.split(":", 1)[1])
-    await state.set_state(Questionnaire.extra_about)
-    await call.message.answer("9) ✍️ Коротко о себе (1–3 предложения). Если не хотите — напишите: пропустить")
-    await call.answer()
-
-
-@router.message(Questionnaire.extra_about)
-async def q_extra(message: Message, state: FSMContext) -> None:
-    text = (message.text or "").strip()
-    if text.lower() == "пропустить":
-        text = ""
-    await state.update_data(extra_about=text)
-
-    await state.set_state(Questionnaire.partner_age)
-    await message.answer("10) 🎂 Примерный возраст будущего супруга(и)? (например 22–28)")
-
-
-@router.message(Questionnaire.partner_age)
-async def q_partner_age(message: Message, state: FSMContext) -> None:
-    text = (message.text or "").strip()
-    if not text:
-        await message.answer("Укажите возраст/диапазон (например 22–28).")
-        return
-    await state.update_data(partner_age=text)
-    await state.set_state(Questionnaire.partner_nationality_pref)
-    await message.answer("11) 🌍 Нация будущего супруга(и):", reply_markup=partner_nat_kb())
-
-
-@router.callback_query(Questionnaire.partner_nationality_pref, F.data.startswith("pn:"))
-async def q_partner_nat(call: CallbackQuery, state: FSMContext) -> None:
-    val = call.data.split(":", 1)[1]
-    if val == "CONCRETE":
-        await state.set_state(Questionnaire.partner_nationality_custom)
-        await call.message.answer("🌍 Напишите нацию, которую вы предпочитаете (или несколько):")
-        await call.answer()
-        return
-
-    await state.update_data(partner_nationality_pref=val)
-    await state.set_state(Questionnaire.partner_priority)
-    await call.message.answer("12) 🕌 Религия будущего супруга(и):", reply_markup=partner_priority_kb())
-    await call.answer()
-
-
-@router.message(Questionnaire.partner_nationality_custom)
-async def q_partner_nat_custom(message: Message, state: FSMContext) -> None:
-    text = (message.text or "").strip()
-    if len(text) < 2:
-        await message.answer("Напишите чуть понятнее (минимум 2 символа).")
-        return
-    await state.update_data(partner_nationality_pref=text)
-    await state.set_state(Questionnaire.partner_priority)
-    await message.answer("12) 🕌 Религия будущего супруга(и):", reply_markup=partner_priority_kb())
-
-
-@router.callback_query(Questionnaire.partner_priority, F.data.startswith("pp:"))
-async def q_partner_priority(call: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(partner_priority=call.data.split(":", 1)[1])
-    await state.set_state(Questionnaire.contact_info)
+    await state.set_state(Questionnaire.polygyny_attitude)
+    user = await get_user(call.from_user.id)
+    gender = user.gender if user else None
     await call.message.answer(
-        "13) 📞 Напишите контакты для связи (номер, Telegram, email и т.п.).\n"
-        "Контакты не отображаются в поиске и видны только администратору.",
+        "7) 👫 Отношение к многоженству:",
+        reply_markup=polygyny_kb(gender),
     )
     await call.answer()
 
 
-@router.message(Questionnaire.contact_info)
-async def q_contact_info(message: Message, state: FSMContext) -> None:
+@router.callback_query(Questionnaire.polygyny_attitude, F.data.startswith("poly:"))
+async def q_polygyny(call: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(polygyny_attitude=call.data.split(":", 1)[1])
+    await state.set_state(Questionnaire.free_text)
+    await call.message.answer(
+        "8) ✍️ Коротко о себе (минимум 30 символов). "
+        "Это главное поле для ИИ."
+    )
+    await call.answer()
+
+
+@router.message(Questionnaire.free_text)
+async def q_free_text(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
-    if len(text) < 3:
-        await message.answer("Укажите контакт понятнее (минимум 3 символа).")
+    if len(text) < 30:
+        await message.answer("Текст слишком короткий. Напишите минимум 30 символов.")
         return
-    await state.update_data(contact_info=text)
+
+    await state.update_data(free_text=text)
     await state.set_state(Questionnaire.preview)
 
     data = await state.get_data()
-    _about_text, _looking_text, pretty = build_preview_text(data)
-
     user = await get_user(message.from_user.id)
-    gender = user.gender if user and user.gender else "BROTHER"
+    gender = user.gender if user else None
+    polygyny_label = _label(
+        data.get("polygyny_attitude"),
+        POLYGYNY_LABELS_SISTER if gender == "SISTER" else POLYGYNY_LABELS_BROTHER,
+    )
+    data["polygyny_label"] = polygyny_label
+    pretty = build_preview_text(data)
 
     await send_icon_if_exists(message, gender)
     await message.answer(pretty, reply_markup=preview_kb(), parse_mode="HTML")
@@ -599,7 +594,6 @@ async def preview_edit(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(Questionnaire.preview, F.data == "profile:confirm")
 async def preview_confirm(call: CallbackQuery, state: FSMContext) -> None:
-    # важно: сразу отвечаем, чтобы Telegram не показывал “ошибка на сервере”
     await call.answer("Сохраняю...")
 
     try:
@@ -610,28 +604,31 @@ async def preview_confirm(call: CallbackQuery, state: FSMContext) -> None:
             return
 
         data = await state.get_data()
-        free_text = (data.get("extra_about") or "").strip()
-        if free_text:
-            try:
-                attributes = extract_profile_attributes_free_text(free_text)
-                logger.info("AI attributes: %s", attributes)
-            except Exception:
-                logger.exception("AI attribute extraction failed")
-        await create_profile_for_user(user, data)
+        free_text = (data.get("free_text") or "").strip()
+        profile_id = await create_profile_for_user(user, data)
 
         await state.clear()
-        await call.message.answer("✅ Анкета сохранена.\n\nНажмите: 🔎 Найти", reply_markup=main_kb())
+        asyncio.create_task(extract_and_persist(profile_id, free_text))
+
+        await call.message.answer(
+            "✅ Анкета сохранена.\n\nНажмите: 🔍 Найти",
+            reply_markup=main_kb(),
+        )
 
     except SQLAlchemyError as e:
         logger.exception("DB error on confirm: %s", e)
-        await call.message.answer("Ошибка базы при сохранении анкеты. Посмотрите Traceback в консоли PyCharm.")
+        await call.message.answer(
+            "Ошибка базы при сохранении анкеты. Посмотрите Traceback в консоли PyCharm."
+        )
     except Exception as e:
         logger.exception("Unexpected error on confirm: %s", e)
-        await call.message.answer("Ошибка при сохранении анкеты. Посмотрите Traceback в консоли PyCharm.")
+        await call.message.answer(
+            "Ошибка при сохранении анкеты. Посмотрите Traceback в консоли PyCharm."
+        )
 
 
 @router.message(Command("find"))
-@router.message(F.text == "🔎 Найти")
+@router.message(F.text == "🔍 Найти")
 async def find_handler(message: Message, state: FSMContext) -> None:
     user = await ensure_gender_or_ask(message, state)
     if user is None:
@@ -654,27 +651,32 @@ async def find_handler(message: Message, state: FSMContext) -> None:
         rows = (await session.execute(stmt)).all()
 
     if not rows:
-        await message.answer("Пока нет анкет подходящего пола в базе.\nДля теста создайте анкету с другого аккаунта.")
+        await message.answer(
+            "Пока нет анкет подходящего пола в базе.\n"
+            "Для теста создайте анкету с другого аккаунта."
+        )
         return
 
-    await message.answer("🔎 Результаты поиска (ник/username скрыт):")
+    await message.answer("🔍 Результаты поиска (ник/username скрыт):")
 
     for profile, u in rows:
         img = icon_path(u.gender)
+        polygyny_label = _label(
+            profile.polygyny,
+            POLYGYNY_LABELS_SISTER if u.gender == "SISTER" else POLYGYNY_LABELS_BROTHER,
+        )
         caption = (
             f"Анкета #{profile.id}\n"
-            f"🧑‍⚖️ {gender_label(u.gender)}\n\n"
+            f"🧑‍⚕️ {gender_label(u.gender)}\n\n"
             f"🎂 <b>Возраст:</b> {profile.age or '-'}\n"
-            f"🌍 <b>Нация:</b> {profile.nationality or '-'}\n"
-            f"💍 <b>Статус:</b> {profile.marital_status or '-'}\n"
-            "────────────\n"
-            f"👤 <b>Имя:</b> {profile.name or '-'}\n"
-            f"🏙️ <b>Город:</b> {profile.city or '-'}\n"
-            f"👶 <b>Дети:</b> {profile.children or '-'}\n"
-            f"🕌 <b>Намаз:</b> {profile.prayer or '-'}\n"
-            f"🧳 <b>Переезд:</b> {profile.relocation or '-'}\n\n"
-            f"✍️ <b>О себе:</b> {(profile.extra_about or '').strip() or '-'}\n"
-            "🔒 Контакты скрыты\n"
+            f"🌍 <b>Национальность:</b> {profile.nationality or '-'}\n"
+            f"💍 <b>Семейное положение:</b> {_label(profile.marital_status, MARITAL_LABELS)}\n"
+            f"📍 <b>Локация:</b> {profile.city or '-'}\n"
+            f"🕌 <b>Акъыда/манхадж:</b> {_label(profile.aqida, AQIDA_LABELS)}\n"
+            f"👶 <b>Дети:</b> {_label(profile.children, CHILDREN_LABELS)}\n"
+            f"👫 <b>Многоженство:</b> {polygyny_label}\n"
+            "──────────────────\n"
+            f"✍️ <b>О себе:</b> {_short(profile.about_me_text)}\n"
         )
         if img and img.exists():
             await message.answer_photo(
@@ -708,23 +710,21 @@ async def my_profile(message: Message, state: FSMContext) -> None:
         await message.answer("У вас пока нет анкеты. Нажмите: 📝 Заполнить/обновить анкету")
         return
 
+    polygyny_label = _label(
+        profile.polygyny,
+        POLYGYNY_LABELS_SISTER if user.gender == "SISTER" else POLYGYNY_LABELS_BROTHER,
+    )
     caption = (
         "🧾 Ваша анкета:\n\n"
         f"🎂 <b>Возраст:</b> {profile.age or '-'}\n"
-        f"🌍 <b>Нация:</b> {profile.nationality or '-'}\n"
-        f"💍 <b>Статус:</b> {profile.marital_status or '-'}\n"
-        "────────────\n"
-        f"👤 <b>Имя:</b> {profile.name or '-'}\n"
-        f"🏙️ <b>Город:</b> {profile.city or '-'}\n"
-        f"👶 <b>Дети:</b> {profile.children or '-'}\n"
-        f"🕌 <b>Намаз:</b> {profile.prayer or '-'}\n"
-        f"🧳 <b>Переезд:</b> {profile.relocation or '-'}\n"
-        f"✍️ <b>О себе:</b> {(profile.extra_about or '').strip() or '-'}\n"
-        f"🎯 <b>Ищу возраст:</b> {profile.partner_age or '-'}\n"
-        f"🌍 <b>Ищу нацию:</b> {profile.partner_nationality_pref or '-'}\n"
-        f"🕌 <b>Религия:</b> {profile.partner_priority or '-'}\n"
-        f"📩 <b>Контакты (скрыты):</b> {profile.contact_info or '-'}\n"
-        "🔒 Контакты не отображаются в поиске."
+        f"🌍 <b>Национальность:</b> {profile.nationality or '-'}\n"
+        f"💍 <b>Семейное положение:</b> {_label(profile.marital_status, MARITAL_LABELS)}\n"
+        f"📍 <b>Локация:</b> {profile.city or '-'}\n"
+        f"🕌 <b>Акъыда/манхадж:</b> {_label(profile.aqida, AQIDA_LABELS)}\n"
+        f"👶 <b>Дети:</b> {_label(profile.children, CHILDREN_LABELS)}\n"
+        f"👫 <b>Многоженство:</b> {polygyny_label}\n"
+        "──────────────────\n"
+        f"✍️ <b>О себе:</b> {_short(profile.about_me_text)}\n"
     )
     await message.answer(caption, reply_markup=my_profile_kb(), parse_mode="HTML")
 

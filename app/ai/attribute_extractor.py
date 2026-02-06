@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -20,13 +21,15 @@ def extract_profile_attributes_free_text(text: str) -> list[dict[str, Any]]:
         raise RuntimeError("OPENAI_API_KEY is not set")
     client = OpenAI(api_key=api_key)
     prompt = (
-        "Извлеки атрибуты из текста анкеты. "
-        "Верни только JSON-массив объектов без пояснений. "
-        "Пример: [{\"attribute\":\"хобби\",\"value\":\"чтение\"}].\n\n"
+        "Извлеки атрибуты из текста анкеты. Верни только JSON-массив объектов без пояснений. "
+        "Каждый объект должен содержать поля: key, value, scope, confidence, evidence. "
+        "scope только SELF или PREFERENCE. confidence от 0 до 1. evidence — короткая цитата до 80 символов. "
+        "Старайся использовать известные ключи: age, location, nationality, aqida_manhaj, marital_status, "
+        "children, polygyny_attitude, height_cm, weight_kg, prayer_level, hijab_type, relocation_ready, "
+        "partner_age_range. Не дублируй одно и то же; не более 20 пунктов.\n\n"
         f"Текст:\n{text}"
     )
-    request_payload = {
-        "model": "gpt-4.1-nano",
+    base_payload = {
         "input": [{"role": "user", "content": prompt}],
         "response_format": {
             "type": "json_schema",
@@ -37,21 +40,57 @@ def extract_profile_attributes_free_text(text: str) -> list[dict[str, Any]]:
                     "items": {
                         "type": "object",
                         "properties": {
-                            "attribute": {"type": "string"},
+                            "key": {"type": "string"},
                             "value": {"type": "string"},
+                            "scope": {"type": "string"},
+                            "confidence": {"type": "number"},
+                            "evidence": {"type": "string"},
                         },
-                        "required": ["attribute", "value"],
+                        "required": ["key", "value", "scope", "confidence", "evidence"],
                         "additionalProperties": False,
                     },
                 },
             },
         },
     }
-    try:
-        response = client.responses.create(**request_payload)
-    except TypeError:
-        request_payload.pop("response_format", None)
-        response = client.responses.create(**request_payload)
+
+    # determine primary model from settings with explicit fallback
+    model = settings.openai_model or "gpt-5-nano"
+    fallbacks = [model, "gpt-5-nano", "gpt-5-mini", "gpt-4o-mini"]
+    # remove duplicates preserving order
+    seen = set()
+    models = []
+    for m in fallbacks:
+        if m not in seen:
+            seen.add(m)
+            models.append(m)
+
+    response = None
+    used_model = None
+    for candidate in models:
+        payload = dict(base_payload)
+        payload["model"] = candidate
+        try:
+            try:
+                response = client.responses.create(**payload)
+            except TypeError:
+                # some client versions might not accept response_format
+                payload.pop("response_format", None)
+                response = client.responses.create(**payload)
+            used_model = candidate
+            logger.info("AI extraction using model=%s", used_model)
+            break
+        except Exception as e:  # inspect error for retriable model issues
+            status = getattr(e, "status_code", None) or getattr(e, "status", None) or getattr(e, "http_status", None)
+            msg = str(e)
+            if status in (403, 404) or "does not have access" in msg or "model_not_found" in msg:
+                logger.warning("Model %s unavailable: %s", candidate, msg)
+                continue
+            raise
+
+    if response is None:
+        raise RuntimeError("No available OpenAI model could be used for extraction")
+
     output_text = response.output_text.strip()
     try:
         return json.loads(output_text)
@@ -62,3 +101,7 @@ def extract_profile_attributes_free_text(text: str) -> list[dict[str, Any]]:
         if start != -1 and end != -1 and end > start:
             return json.loads(output_text[start : end + 1])
         raise
+
+
+async def extract_profile_attributes_free_text_async(text: str) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(extract_profile_attributes_free_text, text)
